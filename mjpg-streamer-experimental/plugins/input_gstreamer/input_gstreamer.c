@@ -114,10 +114,6 @@ int input_init(input_parameter* param, int id)
     g_object_set (source, "imx-capture-mode", 5, NULL);
     g_object_set (source, "fps-n", 30, NULL);
 
-    GstElement *rotate = gst_element_factory_make("imxipuvideotransform", "rotate");
-    //GstElement *rotate = gst_element_factory_make("imxpxpvideotransform", "rotate");
-    g_object_set(rotate, "output-rotation", 2, NULL);
-
     GstElement *mjpeg_enc = gst_element_factory_make("imxvpuenc_mjpeg", "mjpeg");
 
     if (!mjpeg_enc) {
@@ -137,16 +133,10 @@ int input_init(input_parameter* param, int id)
 
     pctx->appsink = (GstAppSink *) sink;
 
-    gst_bin_add_many (GST_BIN (pipeline), source, rotate, mjpeg_enc, sink, NULL);
+    gst_bin_add_many (GST_BIN (pipeline), source, mjpeg_enc, sink, NULL);
 
 
-    if (!gst_element_link(source, rotate)) {
-        g_printerr("Cannot link source to mjpeg_enc\n");
-        gst_object_unref(pipeline);
-        return -1;
-    }
-
-    if (!gst_element_link(rotate, mjpeg_enc)) {
+    if (!gst_element_link(source, mjpeg_enc)) {
         g_printerr("Cannot link source to mjpeg_enc\n");
         gst_object_unref(pipeline);
         return -1;
