@@ -182,12 +182,9 @@ int input_run(int id)
 
     in->buf = malloc(1048576);
 
-    g_print("1111 HEAR YE HEAR YE sink is GstAppSink? %d\n",
-        GST_IS_APP_SINK(pctx->appsink));
     pthread_create(&(pctx->threadID), NULL, cam_thread, in);
     pthread_detach(pctx->threadID);
-    g_print("2222 HEAR YE HEAR YE sink is GstAppSink? %d\n",
-        GST_IS_APP_SINK(pctx->appsink));
+
     return 0;
 }
 
@@ -224,8 +221,6 @@ void *cam_thread(void *arg)
     GstMessage *msg;
 
     bus = gst_element_get_bus (pipeline);
-    g_print("HEAR YE HEAR YE sink is GstAppSink? %d\n",
-        GST_IS_APP_SINK(pcontext->appsink));
 
     while (!pglobal->stop) {
         //g_print("HEAR YE HEAR YE sink is GstAppSink? %d\n", GST_IS_APP_SINK(pcontext->appsink));
