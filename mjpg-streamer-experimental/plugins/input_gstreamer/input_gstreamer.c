@@ -2,9 +2,17 @@
 #include <gst/app/gstappsink.h>
 #include <pthread.h>
 #include <stdio.h>
-
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <time.h>
 #include <pthread.h>
+#include <getopt.h>
 #include "input_gstreamer.h"
+
+#include "../../utils.h"
 
 #define INPUT_PLUGIN_NAME "OV5640 GStreamer grabber"
 
@@ -15,12 +23,26 @@ struct my_context {
     globals *pglobal;
     pthread_t threadID;
     GstAppSink *appsink;
+    int video_dev;
+    int active_flag;
 };
 
 static GstElement *pipeline = NULL;
 static GstElement *sink = NULL;
 
 void *cam_thread(void *arg);
+void *cam_thread2(void *arg);
+
+void help(void)
+{
+    fprintf(stderr, " ---------------------------------------------------------------\n" \
+    " Help for input plugin..: "INPUT_PLUGIN_NAME"\n" \
+    " ---------------------------------------------------------------\n" \
+    " The following parameters can be passed to this plugin:\n\n" \
+    " [-d | --device ].......: video device to open (your camera)\n" \
+    "                          can be one of the following strings:\n" \
+    "                          ");
+}
 
 static GstFlowReturn new_frame_callback(GstElement *sink, input *in)
 {
@@ -101,6 +123,52 @@ int input_init(input_parameter* param, int id)
 
     fprintf(stderr, "%s: Here we are\n", __func__);
 
+    // Handle parameters
+    reset_getopt();
+    while (1) {
+        int option_index = 0, c = 0;
+        static struct option long_options[] = {
+            {"h", no_argument, 0, 0},
+            {"help", no_argument, 0, 0},
+            {"d", required_argument, 0, 0},
+            {"device", required_argument, 0, 0},
+            {0, 0, 0, 0}
+        };
+
+        /* parsing all parameters according to the list above is sufficent */
+        c = getopt_long_only(param->argc, param->argv, "", long_options, &option_index);
+
+        /* no more options to parse */
+        if(c == -1) break;
+
+        /* unrecognized option */
+        if(c == '?') {
+            help();
+            return 1;
+        }
+
+        /* dispatch the given options */
+        switch(option_index) {
+        /* h, help */
+        case 0:
+        case 1:
+            DBG("case 0,1\n");
+            help();
+            return 1;
+            break;
+
+        /* d, device */
+        case 2:
+        case 3:
+            DBG("case 2,3\n");
+            dev = realpath(optarg, NULL);
+            sscanf(dev, "/dev/video%d", &pctx->video_dev);
+            printf("video_dev == %d\n", pctx->video_dev);
+            break;
+        }
+    }
+
+    g_print("Input device is %s\n", dev);
 
     gst_init (0, NULL);
     fprintf(stderr, "%s: gst_init()\n", __func__);
@@ -110,7 +178,7 @@ int input_init(input_parameter* param, int id)
 
     GstElement *source = gst_element_factory_make("imxv4l2videosrc", "macrocam");
     g_print("source = %p\n", source);
-    g_object_set (source, "device", "/dev/video0", NULL);
+    g_object_set (source, "device", dev, NULL);
     g_object_set (source, "imx-capture-mode", 5, NULL);
     g_object_set (source, "fps-n", 30, NULL);
 
@@ -173,6 +241,19 @@ int input_stop(int id)
     return 0;
 }
 
+int kickoff(input *in)
+{
+    //input *in = &pglobal->in[id];
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    double ns = ts.tv_sec * 1e9 + ts.tv_nsec;
+    g_printerr("kickoff at %.3f us\n", ns / 1000.0);
+    struct my_context *pctx = (struct my_context *) in->context;
+
+    pthread_create(&(pctx->threadID), NULL, cam_thread2, in);
+    pthread_detach(pctx->threadID);
+}
+
 int input_run(int id)
 {
     fprintf(stderr, "%s: Here we are\n", __func__);
@@ -182,9 +263,13 @@ int input_run(int id)
 
     in->buf = malloc(1048576);
 
+    g_print("run(): input is %p\n", &in);
+    /*
     pthread_create(&(pctx->threadID), NULL, cam_thread, in);
     pthread_detach(pctx->threadID);
+    */
 
+    kickoff(in);
     return 0;
 }
 
@@ -204,7 +289,7 @@ void *cam_thread(void *arg)
 {
     input *in = (input *) arg;
     struct my_context *pcontext = (struct my_context *) in->context;
-
+    int first = 1;
     pthread_cleanup_push(cam_cleanup, NULL);
 
     GstStateChangeReturn ret;
@@ -225,6 +310,15 @@ void *cam_thread(void *arg)
     while (!pglobal->stop) {
         //g_print("HEAR YE HEAR YE sink is GstAppSink? %d\n", GST_IS_APP_SINK(pcontext->appsink));
         GstSample *frame = gst_app_sink_pull_sample(pcontext->appsink);
+
+        if (first) {
+            first = 0;
+            struct timespec t;
+            clock_gettime(CLOCK_MONOTONIC_RAW, &t);
+            double ns = t.tv_sec * 1e9 + t.tv_nsec;
+            g_printerr("First frame at %.3f us\n", ns / 1000.0);
+        }
+
         //g_print("Got frame %p\n", frame);
         handle_frame(frame, in);
         gst_sample_unref(frame);
@@ -266,10 +360,241 @@ out:
     gst_object_unref (pipeline);
 
     pthread_cleanup_pop(1);
+    g_print("Exiting cam_thread\n");
+}
+
+void *cam_thread2(void *arg)
+{
+    int cam_running = 0;
+    input *in = (input *) arg;
+    struct my_context *pcontext = (struct my_context *) in->context;
+    int first = 1;
+    pthread_cleanup_push(cam_cleanup, NULL);
+
+    GstBus *bus;
+    GstMessage *msg;
+
+    bus = gst_element_get_bus (pipeline);
+
+    GstStateChangeReturn ret;
+    g_print("starting cam_thread2\n");
+    while (!pglobal->stop) {
+        switch (cam_running) {
+        case 0:
+            if (pcontext->active_flag) {
+                g_print("ACTIVATING CAMERA\n");
+                ret = gst_element_set_state (pipeline, GST_STATE_PLAYING);
+                if (ret != GST_STATE_CHANGE_FAILURE) {
+                    cam_running = 1;
+                    first = 1;
+                    g_print("Camera started!\n");
+                }
+                else {
+                    g_print("ret = %d\n", ret);
+                }
+            }
+            else {
+                usleep(10000L);
+            }
+            break;
+
+        case 1:
+            if (!pcontext->active_flag) {
+                g_print("UNACTIVATE\n");
+                ret = gst_element_set_state (pipeline, GST_STATE_PAUSED);
+                if (ret != GST_STATE_CHANGE_FAILURE) {
+                    cam_running = 0;
+                    g_print("Camera stopped!\n");
+                }
+                else {
+                    g_print("ret = %d\n", ret);
+                }
+            }
+            break;
+
+        default:
+            break;
+        }
+
+        if (cam_running) {
+            GstSample *frame = gst_app_sink_pull_sample(pcontext->appsink);
+
+            if (first) {
+                first = 0;
+                struct timespec t;
+                clock_gettime(CLOCK_MONOTONIC_RAW, &t);
+                double ns = t.tv_sec * 1e9 + t.tv_nsec;
+                g_printerr("First frame at %.3f us\n", ns / 1000.0);
+            }
+
+            handle_frame(frame, in);
+            gst_sample_unref(frame);
+
+        }
+    }
+
+out:
+    gst_object_unref (bus);
+    gst_element_set_state (pipeline, GST_STATE_NULL);
+    gst_object_unref (pipeline);
+
+    pthread_cleanup_pop(1);
+    g_print("Exiting cam_thread\n");
+}
+
+
+/*
+ struct v4l2_control ctrl;
+    if(on)
+        ctrl.id = V4L2_CID_AUTO_FOCUS_START;
+    else
+        ctrl.id = V4L2_CID_AUTO_FOCUS_STOP;
+    ctrl.value = 0;
+    if(ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0)
+        qWarning() << "IOCTL for " << ctrl.id << " failed";
+    close(fd);
+
+    struct v4l2_control ctrl;
+    if(on)
+        ctrl.id = V4L2_CID_FOCUS_AUTO;
+    else
+        ctrl.id = V4L2_CID_AUTO_FOCUS_STOP;
+    ctrl.value = 0;
+    if(ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0)
+        qWarning() << "IOCTL for " << ctrl.id << " failed";
+    close(fd);
+
+case V4L2_CID_FOCUS_ABSOLUTE:
+                // Custom implementation that sets the ROI
+                retval = ov5640_af_set_region((vc->value >> 16),
+                                              (vc->value & 0xffff));
+                break;
+*/
+
+static int open_device(input *in)
+{
+    int retval = 0;
+    char devfile[128] = {0};
+    struct my_context *pcontext = (struct my_context *) in->context;
+    struct timespec t1, t2;
+
+    sprintf(devfile, "/dev/video%d", pcontext->video_dev);
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+
+    int fd = open(devfile, O_RDWR);
+    if (fd < 0) {
+        g_printerr("Cannot open video device %s: %d\n", devfile, errno);
+        return -1;
+    }
+    clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+
+    int64_t ns = (t2.tv_sec * 1000000000L + t2.tv_nsec) - (t1.tv_sec * 1000000000L + t1.tv_nsec);
+    g_print("Open device took %.2f us\n", ns / 1000.0);
+
+    return fd;
+}
+
+static int get_autofocus_status(int fd)
+{
+        struct v4l2_control ctrl;
+        ctrl.id = V4L2_CID_AUTO_FOCUS_STATUS;
+        ctrl.value = 0;
+        if (ioctl(fd, VIDIOC_G_CTRL, &ctrl) < 0) {
+                perror("V4L2_CID_AUTO_FOCUS_STATUS");
+                return -1;
+        }
+        return ctrl.value;
+}
+
+static int lock_autofocus(int fd)
+{
+        struct v4l2_control ctrl;
+        ctrl.id = V4L2_CID_3A_LOCK;
+        ctrl.value = V4L2_LOCK_FOCUS;
+        if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+                perror("V4L2_CID_3A_LOCK");
+                return -1;
+        }
+        return 0;
+}
+
+static int release_focus(int fd)
+{
+        struct v4l2_control ctrl;
+        ctrl.id = V4L2_CID_AUTO_FOCUS_STOP;
+        ctrl.value = 0;
+        if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+                perror("V4L2_CID_AUTO_FOCUS_STOP");
+                return -1;
+        }
+        return 0;
+}
+
+static int start_autofocus_single(int fd)
+{
+        struct v4l2_control ctrl;
+        ctrl.id = V4L2_CID_AUTO_FOCUS_START;
+        ctrl.value = 0;
+        printf("fd = %d, VIDIOC_S_CTRL, ctrl.id = %x, ctrl.value = %d\n",
+                fd, ctrl.id, ctrl.value);
+        if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+                perror("V4L2_CID_AUTO_FOCUS_START");
+                return -1;
+        }
+        return 0;
 }
 
 int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int value)
 {
+    int res = 0;
+    struct v4l2_control vc;
+    int fd;
+
+    input in = pglobal->in[plugin];
+
+    input *iin = &pglobal->in[plugin];
+    struct my_context *pctx = (struct my_context *) iin->context;
+
     fprintf(stderr, "%s: Here we are\n", __func__);
+    printf("%s: called with: plugin = %d, control_id = %u, typecode = %u, value = %d\n",
+        __func__, plugin, control_id, typecode, value);
+
+    switch (control_id) {
+    case 1: // Start stream
+        g_print("input is %p\n", iin);
+        //kickoff(iin);
+        pctx->active_flag = 1;
+        break;
+
+    case 2: // Stop stream
+        g_print("Stop stream\n");
+        //pglobal->stop = 1;
+        pctx->active_flag = 0;
+
+        break;
+
+    case 3: // Run autofocus
+        g_print("opening device...\n");
+        fd = open_device(&in);
+        if (fd < 0) {
+            g_printerr("Cannot open device\n");
+            return -1;
+        }
+
+        if (start_autofocus_single(fd) < 0) {
+            goto bye;
+        }
+
+bye:
+
+        close(fd);
+        g_print("result = %d\n", res);
+        break;
+
+    default:
+        break;
+    }
+
     return 0;
 }
