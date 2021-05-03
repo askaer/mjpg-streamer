@@ -27,6 +27,39 @@ struct my_context {
     int active_flag;
 };
 
+struct ov5640_mode {
+    const int mode_nr;
+    const char *string;
+    const int width, height;
+};
+
+static const struct ov5640_mode camera_modes[] = {
+    { 0, "VGA",   640,  480  },
+    { 1, "QVGA",  320,  240  },
+    { 2, "NTSC",  720,  480  },
+    { 3, "PAL",   720,  576  },
+    { 4, "HD",    1280, 720  },
+    { 5, "FHD",   1920, 1080 },
+    { 6, "QSXGA", 2592, 1944 },
+    { 7, "QCIF",  176,  144  },
+    { 8, "XGA",   1024, 768  },
+};
+/*
+enum ov5640_mode {
+        ov5640_mode_MIN = 0,
+        ov5640_mode_VGA_640_480 = 0,
+        ov5640_mode_QVGA_320_240 = 1,
+        ov5640_mode_NTSC_720_480 = 2,
+        ov5640_mode_PAL_720_576 = 3,
+        ov5640_mode_720P_1280_720 = 4,
+        ov5640_mode_1080P_1920_1080 = 5,
+        ov5640_mode_QSXGA_2592_1944 = 6,
+        ov5640_mode_QCIF_176_144 = 7,
+        ov5640_mode_XGA_1024_768 = 8,
+        ov5640_mode_MAX = 8,
+        ov5640_mode_INIT = 0xff,
+};
+*/
 static GstElement *pipeline = NULL;
 static GstElement *sink = NULL;
 
@@ -40,9 +73,34 @@ void help(void)
     " ---------------------------------------------------------------\n" \
     " The following parameters can be passed to this plugin:\n\n" \
     " [-d | --device ].......: video device to open (your camera)\n" \
+    " [-r | --resolution ]...: resolution\n" \
     " [-f | fps ]............: frame rate (15 or 30)\n" \
     " [-s | swjpeg ].........: use sw jpeg encoding\n" \
     "                          ");
+}
+
+const struct ov5640_mode *find_camera_mode(const char *optarg)
+{
+    int i, width, height;
+    const struct ov5640_mode *p = &camera_modes[0];
+    const struct ov5640_mode *end = &camera_modes[LENGTH_OF(camera_modes)];
+
+    for (p = &camera_modes[0]; p != end; p++) {
+        if (strcmp(p->string, optarg) == 0) {
+            return p;
+        }
+    }
+
+    if (sscanf(optarg, "%dx%d", &width, &height) == 2) {
+        for (p = &camera_modes[0]; p != end; p++) {
+            if (width == p->width && height == p->height)
+                return p;
+        }
+    }
+
+    fprintf(stderr, "Invalid resolution or height/width '%s' specified!\n", optarg);
+
+    return NULL;
 }
 
 static GstFlowReturn new_frame_callback(GstElement *sink, input *in)
@@ -112,7 +170,8 @@ static void handle_frame(GstSample *sample, input *in)
 
 int input_init(input_parameter* param, int id)
 {
-    int fps = 30, capture_mode = 5, sw_jpeg = 0;
+    int fps = 30, sw_jpeg = 0;
+    const struct ov5640_mode *camera_mode = NULL;
     char *dev = "/dev/video0";
     struct my_context *pctx = calloc(1, sizeof(struct my_context));
 
@@ -138,6 +197,8 @@ int input_init(input_parameter* param, int id)
             {"fps", required_argument, 0, 0},
             {"s", no_argument, 0, 0},
             {"swjpeg", no_argument, 0, 0},
+            {"r", required_argument, 0, 0},
+            {"resolution", required_argument, 0, 0},
             {0, 0, 0, 0}
         };
 
@@ -190,10 +251,22 @@ int input_init(input_parameter* param, int id)
             sw_jpeg = 1;
             printf("SW jpeg encoding\n");
             break;
+
+        case 8:
+        case 9:
+            DBG("case 8, 9\n");
+            camera_mode = find_camera_mode(optarg);
+            break;
         }
     }
 
     g_print("Input device is %s\n", dev);
+    if (camera_mode == NULL) {
+        g_print("Choosing default resolution\n");
+        camera_mode = &camera_modes[5];
+    }
+    g_print("Camera mode %d (%d x %d)\n", camera_mode->mode_nr,
+        camera_mode->width, camera_mode->height);
 
     gst_init (0, NULL);
     fprintf(stderr, "%s: gst_init()\n", __func__);
@@ -204,7 +277,7 @@ int input_init(input_parameter* param, int id)
     GstElement *source = gst_element_factory_make("imxv4l2videosrc", "macrocam");
     g_print("source = %p\n", source);
     g_object_set (source, "device", dev, NULL);
-    g_object_set (source, "imx-capture-mode", capture_mode, NULL);
+    g_object_set (source, "imx-capture-mode", camera_mode->mode_nr, NULL);
     g_object_set (source, "fps-n", fps, NULL);
 
     GstElement *mjpeg_enc = NULL;
