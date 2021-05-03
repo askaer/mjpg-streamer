@@ -40,7 +40,8 @@ void help(void)
     " ---------------------------------------------------------------\n" \
     " The following parameters can be passed to this plugin:\n\n" \
     " [-d | --device ].......: video device to open (your camera)\n" \
-    " [-f | fps ]............: frame rate (15 or 30)\n"
+    " [-f | fps ]............: frame rate (15 or 30)\n" \
+    " [-s | swjpeg ].........: use sw jpeg encoding\n" \
     "                          ");
 }
 
@@ -111,7 +112,7 @@ static void handle_frame(GstSample *sample, input *in)
 
 int input_init(input_parameter* param, int id)
 {
-    int fps = 30;
+    int fps = 30, capture_mode = 5, sw_jpeg = 0;
     char *dev = "/dev/video0";
     struct my_context *pctx = calloc(1, sizeof(struct my_context));
 
@@ -135,6 +136,8 @@ int input_init(input_parameter* param, int id)
             {"device", required_argument, 0, 0},
             {"f", required_argument, 0, 0},
             {"fps", required_argument, 0, 0},
+            {"s", no_argument, 0, 0},
+            {"swjpeg", no_argument, 0, 0},
             {0, 0, 0, 0}
         };
 
@@ -179,6 +182,14 @@ int input_init(input_parameter* param, int id)
                 return 1;
             }
             break;
+
+        // SW jpeg encoding
+        case 6:
+        case 7:
+            DBG("case 6, 7\n");
+            sw_jpeg = 1;
+            printf("SW jpeg encoding\n");
+            break;
         }
     }
 
@@ -193,13 +204,19 @@ int input_init(input_parameter* param, int id)
     GstElement *source = gst_element_factory_make("imxv4l2videosrc", "macrocam");
     g_print("source = %p\n", source);
     g_object_set (source, "device", dev, NULL);
-    g_object_set (source, "imx-capture-mode", 5, NULL);
+    g_object_set (source, "imx-capture-mode", capture_mode, NULL);
     g_object_set (source, "fps-n", fps, NULL);
 
-    GstElement *mjpeg_enc = gst_element_factory_make("imxvpuenc_mjpeg", "mjpeg");
+    GstElement *mjpeg_enc = NULL;
+
+    if (sw_jpeg)
+        mjpeg_enc = gst_element_factory_make("jpegenc", "mjpeg");
+    else
+        mjpeg_enc = gst_element_factory_make("imxvpuenc_mjpeg", "mjpeg");
 
     if (!mjpeg_enc) {
-        fprintf(stderr, "Cannot create imxvpumjpeg_enc!\n");
+        fprintf(stderr, "Cannot create %smjpeg_enc!\n",
+            (sw_jpeg ? "sw-" : ""));
         return -1;
     }
     g_print("mjpeg_enc = %p\n", mjpeg_enc);
