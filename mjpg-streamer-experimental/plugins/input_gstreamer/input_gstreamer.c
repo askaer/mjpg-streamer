@@ -40,7 +40,7 @@ void help(void)
     " ---------------------------------------------------------------\n" \
     " The following parameters can be passed to this plugin:\n\n" \
     " [-d | --device ].......: video device to open (your camera)\n" \
-    "                          can be one of the following strings:\n" \
+    " [-f | fps ]............: frame rate (15 or 30)\n"
     "                          ");
 }
 
@@ -111,6 +111,7 @@ static void handle_frame(GstSample *sample, input *in)
 
 int input_init(input_parameter* param, int id)
 {
+    int fps = 30;
     char *dev = "/dev/video0";
     struct my_context *pctx = calloc(1, sizeof(struct my_context));
 
@@ -132,6 +133,8 @@ int input_init(input_parameter* param, int id)
             {"help", no_argument, 0, 0},
             {"d", required_argument, 0, 0},
             {"device", required_argument, 0, 0},
+            {"f", required_argument, 0, 0},
+            {"fps", required_argument, 0, 0},
             {0, 0, 0, 0}
         };
 
@@ -165,6 +168,17 @@ int input_init(input_parameter* param, int id)
             sscanf(dev, "/dev/video%d", &pctx->video_dev);
             printf("video_dev == %d\n", pctx->video_dev);
             break;
+
+        /* f, fps */
+        case 4:
+        case 5:
+            DBG("case 4,5\n");
+            fps = atoi(optarg);
+            if (fps != 15 && fps != 30) {
+                fprintf(stderr, "The driver only support 15 or 30 fps!\n");
+                return 1;
+            }
+            break;
         }
     }
 
@@ -180,7 +194,7 @@ int input_init(input_parameter* param, int id)
     g_print("source = %p\n", source);
     g_object_set (source, "device", dev, NULL);
     g_object_set (source, "imx-capture-mode", 5, NULL);
-    g_object_set (source, "fps-n", 30, NULL);
+    g_object_set (source, "fps-n", fps, NULL);
 
     GstElement *mjpeg_enc = gst_element_factory_make("imxvpuenc_mjpeg", "mjpeg");
 
