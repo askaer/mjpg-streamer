@@ -10,6 +10,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <getopt.h>
+#include <stdint.h>
 #include "input_gstreamer.h"
 
 #include "../../utils.h"
@@ -649,9 +650,23 @@ static int start_autofocus_single(int fd)
         return 0;
 }
 
+static int set_autofocus_region(int fd, uint16_t x, uint16_t y)
+{
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_FOCUS_ABSOLUTE;
+    ctrl.value = (((uint32_t) x) << 16) | y;
+    printf("fd = %d, VIDIOC_S_CTRL, ctrl.id = %x, ctrl.value = %d, 0x%08x\n",
+            fd, ctrl.id, ctrl.value, ctrl.value);
+    if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+            perror("V4L2_CID_FOCUS_ABSOLUTE");
+            return -1;
+    }
+    return 0;
+}
+
 int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int value)
 {
-    int res = 0;
+    int res = 0, retval = 0;
     struct v4l2_control vc;
     int fd;
 
@@ -675,7 +690,6 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
         g_print("Stop stream\n");
         //pglobal->stop = 1;
         pctx->active_flag = 0;
-
         break;
 
     case 3: // Run autofocus
@@ -683,22 +697,39 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
         fd = open_device(&in);
         if (fd < 0) {
             g_printerr("Cannot open device\n");
-            return -1;
+            retval = -1;
+            break;
         }
 
         if (start_autofocus_single(fd) < 0) {
-            goto bye;
+            retval = -1;
         }
-
-bye:
 
         close(fd);
         g_print("result = %d\n", res);
+        break;
+
+    case 4: // Set autofocus region
+        {
+            uint16_t x = ((uint32_t) value) >> 16;
+            uint16_t y = ((uint32_t) value) & 0xffff;
+
+            fd = open_device(&in);
+            if (fd < 0) {
+                g_printerr("Cannot open device\n");
+                retval = -1;
+                break;
+            }
+
+            if (set_autofocus_region(fd, x, y) < 0) {
+                retval = -1;
+            }
+        }
         break;
 
     default:
         break;
     }
 
-    return 0;
+    return retval;
 }
