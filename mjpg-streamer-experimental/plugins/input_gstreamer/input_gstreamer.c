@@ -602,52 +602,52 @@ static int open_device(input *in)
 
 static int get_autofocus_status(int fd)
 {
-        struct v4l2_control ctrl;
-        ctrl.id = V4L2_CID_AUTO_FOCUS_STATUS;
-        ctrl.value = 0;
-        if (ioctl(fd, VIDIOC_G_CTRL, &ctrl) < 0) {
-                perror("V4L2_CID_AUTO_FOCUS_STATUS");
-                return -1;
-        }
-        return ctrl.value;
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_AUTO_FOCUS_STATUS;
+    ctrl.value = 0;
+    if (ioctl(fd, VIDIOC_G_CTRL, &ctrl) < 0) {
+            perror("V4L2_CID_AUTO_FOCUS_STATUS");
+            return -1;
+    }
+    return ctrl.value;
 }
 
 static int lock_autofocus(int fd)
 {
-        struct v4l2_control ctrl;
-        ctrl.id = V4L2_CID_3A_LOCK;
-        ctrl.value = V4L2_LOCK_FOCUS;
-        if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
-                perror("V4L2_CID_3A_LOCK");
-                return -1;
-        }
-        return 0;
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_3A_LOCK;
+    ctrl.value = V4L2_LOCK_FOCUS;
+    if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+            perror("V4L2_CID_3A_LOCK");
+            return -1;
+    }
+    return 0;
 }
 
 static int release_focus(int fd)
 {
-        struct v4l2_control ctrl;
-        ctrl.id = V4L2_CID_AUTO_FOCUS_STOP;
-        ctrl.value = 0;
-        if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
-                perror("V4L2_CID_AUTO_FOCUS_STOP");
-                return -1;
-        }
-        return 0;
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_AUTO_FOCUS_STOP;
+    ctrl.value = 0;
+    if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+            perror("V4L2_CID_AUTO_FOCUS_STOP");
+            return -1;
+    }
+    return 0;
 }
 
 static int start_autofocus_single(int fd)
 {
-        struct v4l2_control ctrl;
-        ctrl.id = V4L2_CID_AUTO_FOCUS_START;
-        ctrl.value = 0;
-        printf("fd = %d, VIDIOC_S_CTRL, ctrl.id = %x, ctrl.value = %d\n",
-                fd, ctrl.id, ctrl.value);
-        if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
-                perror("V4L2_CID_AUTO_FOCUS_START");
-                return -1;
-        }
-        return 0;
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_AUTO_FOCUS_START;
+    ctrl.value = 0;
+    printf("fd = %d, VIDIOC_S_CTRL, ctrl.id = %x, ctrl.value = %d\n",
+            fd, ctrl.id, ctrl.value);
+    if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+            perror("V4L2_CID_AUTO_FOCUS_START");
+            return -1;
+    }
+    return 0;
 }
 
 static int set_autofocus_region(int fd, uint16_t x, uint16_t y)
