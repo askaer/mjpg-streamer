@@ -650,6 +650,34 @@ static int start_autofocus_single(int fd)
     return 0;
 }
 
+static int stop_autofocus(int fd)
+{
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_AUTO_FOCUS_STOP;
+    ctrl.value = 0;
+    printf("fd = %d, VIDIOC_S_CTRL, ctrl.id = %x, ctrl.value = %d\n",
+            fd, ctrl.id, ctrl.value);
+    if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+            perror("V4L2_CID_AUTO_FOCUS_STOP");
+            return -1;
+    }
+    return 0;
+}
+
+static int start_autofocus_cont(int fd)
+{
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_FOCUS_AUTO;
+    ctrl.value = 0;
+    printf("fd = %d, VIDIOC_S_CTRL, ctrl.id = %x, ctrl.value = %d\n",
+            fd, ctrl.id, ctrl.value);
+    if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) < 0) {
+            perror("V4L2_CID_FOCUS_AUTO");
+            return -1;
+    }
+    return 0;
+}
+
 static int set_autofocus_region(int fd, uint16_t x, uint16_t y)
 {
     struct v4l2_control ctrl;
@@ -692,7 +720,7 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
         pctx->active_flag = 0;
         break;
 
-    case 3: // Run autofocus
+    case 3: // Run single autofocus
         g_print("opening device...\n");
         fd = open_device(&in);
         if (fd < 0) {
@@ -709,7 +737,24 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
         g_print("result = %d\n", res);
         break;
 
-    case 4: // Set autofocus region
+    case 4: // Run continuous autofocus
+        g_print("opening device...\n");
+        fd = open_device(&in);
+        if (fd < 0) {
+            g_printerr("Cannot open device\n");
+            retval = -1;
+            break;
+        }
+
+        if (start_autofocus_cont(fd) < 0) {
+            retval = -1;
+        }
+
+        close(fd);
+        g_print("result = %d\n", res);
+        break;
+
+    case 5: // Set autofocus region
         {
             uint16_t x = ((uint32_t) value) >> 16;
             uint16_t y = ((uint32_t) value) & 0xffff;
@@ -725,6 +770,23 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
                 retval = -1;
             }
         }
+        break;
+
+    case 6: // Stop autofocus
+        g_print("opening device...\n");
+        fd = open_device(&in);
+        if (fd < 0) {
+            g_printerr("Cannot open device\n");
+            retval = -1;
+            break;
+        }
+
+        if (stop_autofocus(fd) < 0) {
+            retval = -1;
+        }
+
+        close(fd);
+        g_print("result = %d\n", res);
         break;
 
     default:
