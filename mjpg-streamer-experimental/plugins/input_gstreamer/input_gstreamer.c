@@ -104,50 +104,138 @@ const struct ov5640_mode *find_camera_mode(const char *optarg)
     return NULL;
 }
 
-static GstFlowReturn new_frame_callback(GstElement *sink, input *in)
+typedef struct  {
+    GstPad *preview_pad;
+    GstPad *snapshot_pad;
+    GstPad *source_pad;
+    int to_snapshot;
+} switch_pad_info_t;
+
+static switch_pad_info_t switch_pad_info;
+
+static pthread_mutex_t snapshot_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int snapshot_count = 0;
+typedef enum {
+    stateIdle,
+    statePreview,
+    statePreviewToSnap,
+    stateSnap,
+    stateSnapToPreview
+} pipeline_state_t;
+
+static pipeline_state_t pipeline_state = stateIdle;
+
+/*
+static GstPadProbeReturn snapshot_rewire_callback(GstPad *pad, GstPadProbeInfo *info, gpointer data);
+static void install_snapshot_rewire_callback()
 {
-    GstSample *frame;
-    struct my_context *pctx = (struct my_context *) in->context;
-    static int count = 0;
-
-    g_signal_emit_by_name(sink, "pull-sample", &frame);
-    if (frame) {
-        //g_print("New frame = %p\n", frame);
-
-        GstBuffer *buffer = gst_sample_get_buffer(frame);
-        //g_print("GstBuffer buffer = %p\n", buffer);
-
-        GstMapInfo info;
-        if (count++ % 10 == 0) {
-            g_print("cam: mutex = %p, condvar = %p\n", &pglobal->in[pctx->id].db,
-                &pglobal->in[pctx->id].db_update);
-        }
-        pthread_mutex_lock(&pglobal->in[pctx->id].db);
-
-        /*
-        if (gst_buffer_map(buffer, &info, GST_MAP_READ)) {
-            g_print("Copying %d bytes to %p...", info.size, in[pctx->id].buf);
-
-            memcpy(in[pctx->id].buf, info.data, info.size);
-            in[pctx->id].size = info.size;
-            gst_buffer_unmap(buffer, &info);
-            g_print(" Copied\n");
-        }
-        else {
-            g_printerr("Cannot map GstBuffer!\n");
-        }
-        */
-
-        //pthread_cond_broadcast(&in[pctx->id].db_update);
-        pthread_mutex_unlock(&in[pctx->id].db);
-
-        gst_sample_unref(frame);
-        return GST_FLOW_OK;
-    }
-    g_printerr("No frame\n");
-    return GST_FLOW_ERROR;
+    gst_pad_add_probe(switch_pad_info.source_pad, GST_PAD_PROBE_TYPE_BLOCK,
+        snapshot_rewire_callback, NULL, NULL);
 }
 
+static void do_rewire()
+{
+    if (pipeline_state == stateSnap) {
+        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.preview_pad);
+        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
+        g_print("linked to snapshot\n");
+    }
+    else {
+        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
+        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.preview_pad);
+        g_print("linked to preview\n");
+    }
+}
+*/
+static GstPadProbeReturn snapshot_data_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+    int a = 0;
+    switch (pipeline_state) {
+    case statePreview:
+        g_print("%s: preview\n", __func__);
+        break;
+
+    case statePreviewToSnap:
+        g_print("%s: preview->snap\n", __func__);
+
+        snapshot_count = 1;
+        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.preview_pad);
+        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
+        g_print("linked to snapshot\n");
+        pipeline_state = stateSnap;
+        break;
+
+    case stateSnap:
+        g_print("%s: snapshot\n", __func__);
+        break;
+
+    case stateSnapToPreview:
+        g_print("%s: snapshot -> preview\n", __func__);
+        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
+        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.preview_pad);
+        g_print("linked to preview\n");
+        pipeline_state = statePreview;
+        break;
+
+    case stateIdle:
+        g_print("%s: idle\n", __func__);
+        break;
+
+    default:
+        break;
+    }
+    /*
+    if (pipeline_state == stateSnap) {
+        snapshot_count = 1;
+        //install_snapshot_rewire_callback();
+        do_rewire();
+        a = 1;
+    }
+
+    if (a)
+        g_print("   rewire_probe installed\n");
+    */
+    return GST_PAD_PROBE_OK;
+}
+
+static GstPadProbeReturn snapshot_gate_callback(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+    GstPadProbeReturn retval = GST_PAD_PROBE_DROP;
+    g_print("%s\n", __func__);
+
+    if (pipeline_state == stateSnap) {
+        pipeline_state = stateSnapToPreview;
+        snapshot_count = 0;
+
+        // Pass sample to sink
+        retval =  GST_PAD_PROBE_OK;
+    }
+    return retval;
+}
+
+static GstPadProbeReturn pad_debug(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+    GstElement *e = gst_pad_get_parent_element(pad);
+    g_print("%s: %s:%s\n", __func__, GST_ELEMENT_NAME(e), GST_PAD_NAME(pad));
+}
+/*
+GstPadProbeReturn snapshot_rewire_callback(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+    g_print("%s\n", __func__);
+    if (pipeline_state == stateSnap) {
+        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.preview_pad);
+        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
+        g_print("linked to snapshot\n");
+    }
+    else {
+        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
+        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.preview_pad);
+        g_print("linked to preview\n");
+    }
+
+    return GST_PAD_PROBE_REMOVE;
+}
+*/
 static void handle_frame(GstSample *sample, input *in)
 {
     struct my_context *pctx = (struct my_context *) in->context;
@@ -306,21 +394,52 @@ int input_init(input_parameter* param, int id)
 
     pctx->appsink = (GstAppSink *) sink;
 
-    gst_bin_add_many (GST_BIN (pipeline), source, mjpeg_enc, sink, NULL);
+    GstElement *identity = gst_element_factory_make("identity", "identity");
 
+    GstElement *imageenc = gst_element_factory_make("jpegenc", "imageenc");
+    //g_object_set(imageenc, "snapshot", TRUE, NULL);
 
-    if (!gst_element_link(source, mjpeg_enc)) {
-        g_printerr("Cannot link source to mjpeg_enc\n");
-        gst_object_unref(pipeline);
-        return -1;
-    }
+    GstElement *videoscale = gst_element_factory_make("videoscale", "videoscale");
+    GstElement *capsfilter = gst_element_factory_make("capsfilter", "scalecaps");
+    GstCaps *caps = gst_caps_new_simple("video/x-raw",
+        "width", G_TYPE_INT, 640,
+        "height", G_TYPE_INT, 480, NULL);
+    g_object_set(capsfilter, "caps", caps, NULL);
+    gst_caps_unref(caps);
 
-    if (!gst_element_link(mjpeg_enc, sink)) {
-        g_printerr("Cannot link mjpeg_enc to sink\n");
-        gst_object_unref(pipeline);
-        return -1;
-    }
+    GstElement *multifilesink = gst_element_factory_make("multifilesink", "imagesink");
+    g_object_set(multifilesink, "async", FALSE, NULL);
+    g_object_set(multifilesink, "location", "%05d.jpg", NULL);
 
+    gst_bin_add_many (GST_BIN (pipeline), source, identity, videoscale,
+        capsfilter, imageenc, multifilesink, mjpeg_enc, sink, NULL);
+
+    gst_element_link(source, identity);
+    gst_element_link(identity, videoscale);
+    gst_element_link(videoscale, capsfilter);
+    gst_element_link(capsfilter, mjpeg_enc);
+    gst_element_link(mjpeg_enc, sink);
+
+    gst_element_link(imageenc, multifilesink);
+    GstPad *imageenc_src_pad = gst_element_get_static_pad(imageenc, "src");
+
+    switch_pad_info.source_pad = gst_element_get_static_pad(identity, "src");
+    switch_pad_info.preview_pad = gst_element_get_static_pad(videoscale, "sink");
+    switch_pad_info.snapshot_pad = gst_element_get_static_pad(imageenc, "sink");
+
+    gst_pad_add_probe(switch_pad_info.source_pad, GST_PAD_PROBE_TYPE_BUFFER,
+        snapshot_data_probe, NULL, NULL);
+
+    gst_pad_add_probe(imageenc_src_pad, GST_PAD_PROBE_TYPE_BUFFER,
+        snapshot_gate_callback, NULL, NULL);
+
+    GstPad *sink_pad = gst_element_get_static_pad(multifilesink, "sink");
+    GstPad *appsink_pad = gst_element_get_static_pad(sink, "sink");
+
+    gst_pad_add_probe(sink_pad, GST_PAD_PROBE_TYPE_BUFFER, pad_debug, NULL, NULL);
+    gst_pad_add_probe(appsink_pad, GST_PAD_PROBE_TYPE_BUFFER, pad_debug, NULL, NULL);
+
+    pthread_mutex_init(&snapshot_mtx, NULL);
     return 0;
 }
 
@@ -711,11 +830,13 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
     case 1: // Start stream
         g_print("input is %p\n", iin);
         //kickoff(iin);
+        pipeline_state = statePreview;
         pctx->active_flag = 1;
         break;
 
     case 2: // Stop stream
         g_print("Stop stream\n");
+        pipeline_state = stateIdle;
         //pglobal->stop = 1;
         pctx->active_flag = 0;
         break;
@@ -788,6 +909,11 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
         close(fd);
         g_print("result = %d\n", res);
         break;
+
+    case 7: // snap
+        g_print("snapshot command\n");
+        pipeline_state = statePreviewToSnap;
+        g_print("set: pipeline state -> PreviewToSnap\n");
 
     default:
         break;
