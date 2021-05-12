@@ -65,7 +65,6 @@ static GstElement *pipeline = NULL;
 static GstElement *sink = NULL;
 
 void *cam_thread(void *arg);
-void *cam_thread2(void *arg);
 
 void help(void)
 {
@@ -125,28 +124,6 @@ typedef enum {
 
 static pipeline_state_t pipeline_state = stateIdle;
 
-/*
-static GstPadProbeReturn snapshot_rewire_callback(GstPad *pad, GstPadProbeInfo *info, gpointer data);
-static void install_snapshot_rewire_callback()
-{
-    gst_pad_add_probe(switch_pad_info.source_pad, GST_PAD_PROBE_TYPE_BLOCK,
-        snapshot_rewire_callback, NULL, NULL);
-}
-
-static void do_rewire()
-{
-    if (pipeline_state == stateSnap) {
-        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.preview_pad);
-        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
-        g_print("linked to snapshot\n");
-    }
-    else {
-        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
-        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.preview_pad);
-        g_print("linked to preview\n");
-    }
-}
-*/
 static GstPadProbeReturn snapshot_data_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
 {
     int a = 0;
@@ -184,17 +161,7 @@ static GstPadProbeReturn snapshot_data_probe(GstPad *pad, GstPadProbeInfo *info,
     default:
         break;
     }
-    /*
-    if (pipeline_state == stateSnap) {
-        snapshot_count = 1;
-        //install_snapshot_rewire_callback();
-        do_rewire();
-        a = 1;
-    }
 
-    if (a)
-        g_print("   rewire_probe installed\n");
-    */
     return GST_PAD_PROBE_OK;
 }
 
@@ -210,6 +177,7 @@ static GstPadProbeReturn snapshot_gate_callback(GstPad *pad, GstPadProbeInfo *in
         // Pass sample to sink
         retval =  GST_PAD_PROBE_OK;
     }
+
     return retval;
 }
 
@@ -218,24 +186,7 @@ static GstPadProbeReturn pad_debug(GstPad *pad, GstPadProbeInfo *info, gpointer 
     GstElement *e = gst_pad_get_parent_element(pad);
     g_print("%s: %s:%s\n", __func__, GST_ELEMENT_NAME(e), GST_PAD_NAME(pad));
 }
-/*
-GstPadProbeReturn snapshot_rewire_callback(GstPad *pad, GstPadProbeInfo *info, gpointer data)
-{
-    g_print("%s\n", __func__);
-    if (pipeline_state == stateSnap) {
-        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.preview_pad);
-        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
-        g_print("linked to snapshot\n");
-    }
-    else {
-        gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
-        gst_pad_link(switch_pad_info.source_pad, switch_pad_info.preview_pad);
-        g_print("linked to preview\n");
-    }
 
-    return GST_PAD_PROBE_REMOVE;
-}
-*/
 static void handle_frame(GstSample *sample, input *in)
 {
     struct my_context *pctx = (struct my_context *) in->context;
@@ -397,6 +348,9 @@ int input_init(input_parameter* param, int id)
     GstElement *identity = gst_element_factory_make("identity", "identity");
 
     GstElement *imageenc = gst_element_factory_make("jpegenc", "imageenc");
+    g_object_set(imageenc, "quality", 95, NULL);
+    //g_object_set(imageenc, "idct-method", 2, NULL);
+    
     //g_object_set(imageenc, "snapshot", TRUE, NULL);
 
     GstElement *videoscale = gst_element_factory_make("videoscale", "videoscale");
@@ -474,7 +428,7 @@ int kickoff(input *in)
     g_printerr("kickoff at %.3f us\n", ns / 1000.0);
     struct my_context *pctx = (struct my_context *) in->context;
 
-    pthread_create(&(pctx->threadID), NULL, cam_thread2, in);
+    pthread_create(&(pctx->threadID), NULL, cam_thread, in);
     pthread_detach(pctx->threadID);
 }
 
@@ -510,84 +464,6 @@ void cam_cleanup(void *arg)
 }
 
 void *cam_thread(void *arg)
-{
-    input *in = (input *) arg;
-    struct my_context *pcontext = (struct my_context *) in->context;
-    int first = 1;
-    pthread_cleanup_push(cam_cleanup, NULL);
-
-    GstStateChangeReturn ret;
-
-    ret = gst_element_set_state (pipeline, GST_STATE_PLAYING);
-
-    if (ret == GST_STATE_CHANGE_FAILURE) {
-        g_printerr ("Unable to set the pipeline to the PLAYING state.\n");
-        gst_object_unref (pipeline);
-        goto out;
-    }
-
-    GstBus *bus;
-    GstMessage *msg;
-
-    bus = gst_element_get_bus (pipeline);
-
-    while (!pglobal->stop) {
-        //g_print("HEAR YE HEAR YE sink is GstAppSink? %d\n", GST_IS_APP_SINK(pcontext->appsink));
-        GstSample *frame = gst_app_sink_pull_sample(pcontext->appsink);
-
-        if (first) {
-            first = 0;
-            struct timespec t;
-            clock_gettime(CLOCK_MONOTONIC_RAW, &t);
-            double ns = t.tv_sec * 1e9 + t.tv_nsec;
-            g_printerr("First frame at %.3f us\n", ns / 1000.0);
-        }
-
-        //g_print("Got frame %p\n", frame);
-        handle_frame(frame, in);
-        gst_sample_unref(frame);
-#if 0
-        if (msg != NULL) {
-            GError *err;
-            gchar *debug_info;
-            msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE,
-                (GstMessageType) (GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
-
-            switch (GST_MESSAGE_TYPE (msg)) {
-            case GST_MESSAGE_ERROR:
-                gst_message_parse_error (msg, &err, &debug_info);
-                g_printerr ("Error received from element %s: %s\n",
-                    GST_OBJECT_NAME (msg->src), err->message);
-                g_printerr ("Debugging information: %s\n",
-                    debug_info ? debug_info : "none");
-                g_clear_error (&err);
-                g_free (debug_info);
-                break;
-
-            case GST_MESSAGE_EOS:
-                g_print ("End-Of-Stream reached.\n");
-                break;
-
-            default:
-                /* We should not reach here because we only asked for ERRORs and EOS */
-                g_printerr ("Unexpected message received.\n");
-                break;
-            }
-            gst_message_unref(msg);
-        }
-#endif
-    }
-
-out:
-    gst_object_unref (bus);
-    gst_element_set_state (pipeline, GST_STATE_NULL);
-    gst_object_unref (pipeline);
-
-    pthread_cleanup_pop(1);
-    g_print("Exiting cam_thread\n");
-}
-
-void *cam_thread2(void *arg)
 {
     int cam_running = 0;
     input *in = (input *) arg;
