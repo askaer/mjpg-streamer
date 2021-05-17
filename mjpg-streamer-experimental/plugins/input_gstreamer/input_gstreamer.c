@@ -359,7 +359,7 @@ int input_init(input_parameter* param, int id)
 
     GstElement *multifilesink = gst_element_factory_make("multifilesink", "imagesink");
     g_object_set(multifilesink, "async", FALSE, NULL);
-    g_object_set(multifilesink, "location", "%05d.jpg", NULL);
+    g_object_set(multifilesink, "location", "/data/%05d.jpg", NULL);
 
     gst_bin_add_many (GST_BIN (pipeline), source, identity, videoscale,
         capsfilter, imageenc, multifilesink, mjpeg_enc, sink, NULL);
