@@ -129,33 +129,33 @@ static GstPadProbeReturn snapshot_data_probe(GstPad *pad, GstPadProbeInfo *info,
     int a = 0;
     switch (pipeline_state) {
     case statePreview:
-        g_print("%s: preview\n", __func__);
+        //g_print("%s: preview\n", __func__);
         break;
 
     case statePreviewToSnap:
-        g_print("%s: preview->snap\n", __func__);
+        //g_print("%s: preview->snap\n", __func__);
 
         snapshot_count = 1;
         gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.preview_pad);
         gst_pad_link(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
-        g_print("linked to snapshot\n");
+        //g_print("linked to snapshot\n");
         pipeline_state = stateSnap;
         break;
 
     case stateSnap:
-        g_print("%s: snapshot\n", __func__);
+        //g_print("%s: snapshot\n", __func__);
         break;
 
     case stateSnapToPreview:
-        g_print("%s: snapshot -> preview\n", __func__);
+        //g_print("%s: snapshot -> preview\n", __func__);
         gst_pad_unlink(switch_pad_info.source_pad, switch_pad_info.snapshot_pad);
         gst_pad_link(switch_pad_info.source_pad, switch_pad_info.preview_pad);
-        g_print("linked to preview\n");
+        //g_print("linked to preview\n");
         pipeline_state = statePreview;
         break;
 
     case stateIdle:
-        g_print("%s: idle\n", __func__);
+        //g_print("%s: idle\n", __func__);
         break;
 
     default:
@@ -168,7 +168,7 @@ static GstPadProbeReturn snapshot_data_probe(GstPad *pad, GstPadProbeInfo *info,
 static GstPadProbeReturn snapshot_gate_callback(GstPad *pad, GstPadProbeInfo *info, gpointer data)
 {
     GstPadProbeReturn retval = GST_PAD_PROBE_DROP;
-    g_print("%s\n", __func__);
+    //g_print("%s\n", __func__);
 
     if (pipeline_state == stateSnap) {
         pipeline_state = stateSnapToPreview;
@@ -184,7 +184,7 @@ static GstPadProbeReturn snapshot_gate_callback(GstPad *pad, GstPadProbeInfo *in
 static GstPadProbeReturn pad_debug(GstPad *pad, GstPadProbeInfo *info, gpointer data)
 {
     GstElement *e = gst_pad_get_parent_element(pad);
-    g_print("%s: %s:%s\n", __func__, GST_ELEMENT_NAME(e), GST_PAD_NAME(pad));
+    //g_print("%s: %s:%s\n", __func__, GST_ELEMENT_NAME(e), GST_PAD_NAME(pad));
 }
 
 static void handle_frame(GstSample *sample, input *in)
@@ -320,12 +320,8 @@ int input_init(input_parameter* param, int id)
     g_object_set (source, "imx-capture-mode", camera_mode->mode_nr, NULL);
     g_object_set (source, "fps-n", fps, NULL);
 
-    GstElement *mjpeg_enc = NULL;
-
-    if (sw_jpeg)
-        mjpeg_enc = gst_element_factory_make("jpegenc", "mjpeg");
-    else
-        mjpeg_enc = gst_element_factory_make("imxvpuenc_mjpeg", "mjpeg");
+    GstElement *mjpeg_enc = gst_element_factory_make("imxvpuenc_mjpeg", "mjpeg");
+    //g_object_set(mjpeg_enc, "quality-factor", 100, NULL);
 
     if (!mjpeg_enc) {
         fprintf(stderr, "Cannot create %smjpeg_enc!\n",
@@ -350,7 +346,7 @@ int input_init(input_parameter* param, int id)
     GstElement *imageenc = gst_element_factory_make("jpegenc", "imageenc");
     g_object_set(imageenc, "quality", 95, NULL);
     //g_object_set(imageenc, "idct-method", 2, NULL);
-    
+
     //g_object_set(imageenc, "snapshot", TRUE, NULL);
 
     GstElement *videoscale = gst_element_factory_make("videoscale", "videoscale");
